@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+
+}
+
+gpg_packets() { gpg --list-packets -- "$1" 2>&1 ; }
+
+grep_emails() { grep --only-matching --perl-regexp '(?<=<).+@.+\.[^>]+' ; }
+
+join_by() {
+    local d=${1-}
+    local f=${2-}
+    if shift 2;
+        then printf %s "$f" "${@/#/$d}"
+    fi
+}
+
+compose_line()
+{
+    local bcc=$1
+    local subject=$2
+    local attachment=$3
+
+    printf "bcc='%s',subject='%s',attachment='%s',format=2,body='see attached'\n" \
+        "$bcc" \
+        "$subject" \
+        "$attachment"
+}
+
+send()
+{
+    local attachment=$1
+    local subject=${attachment%.*}
+    local recipients bcc param
+
+    subject=${subject##*/}
+    attachment="$(readlink --canonicalize "$attachment")"
+
+    readarray -t recipients
+    bcc=$(join_by , "${recipients[@]}")
+
+    param=$(compose_line "$bcc" "$subject" "$attachment")
+
+    thunderbird -compose "$param"
+}
+
+##
+# Main
+##
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v thunderbird >/dev/null; then
+    die "thunderbird is not available"
+fi
+
+payload=$1
+
+[[ -z "$payload" ]] && die "Nothing to send"
+[[ -f "$payload" ]] || die "$payload does not exist"
+
+if ! packets=$(gpg_packets "$payload"); then
+    display_error "Invalid PGP File" "$payload does not appear to be an encrypted file"
+    die "Invalid payload"
+fi
+
+grep_emails <<< "$packets" | send "$payload"

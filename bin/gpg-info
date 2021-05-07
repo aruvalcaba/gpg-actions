@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+
+##
+# GPG List Packets (info) GUI
+##
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+
+##
+# User Interface
+##
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+
+}
+
+display_text_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --text-info \
+        --width 800 \
+        --height 500 \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --filename <(printf '%s\n' "$text")
+}
+
+##
+# Methods
+##
+
+get_packets()
+{
+    gpg --list-packets -- "$1" 2>&1
+}
+
+##
+# Main
+##
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+
+[[ $# -lt 1 ]] && die "No file to inspect"
+
+if packets=$(get_packets "$1"); then
+    display_text_info "GPG Packets for $1" "$packets"
+else
+    display_text_info "GPG Packets for $1" "$packets"
+    # display_error "Invalid GPG data" "Cannot read GPG packets"
+fi

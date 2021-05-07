@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+##
+# GPG Import Key GUI
+##
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+
+display_info() {
+    zenity \
+        --info \
+        --no-markup \
+        --no-wrap \
+        --text "$output"
+}
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+}
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+
+[[ $# -lt 1 ]] && die "No keys to import"
+
+if output=$(gpg --import "$@" 2>&1); then
+    display_info "$output"
+else
+    display_error "Failed to import key" "Failed to import key"
+    die "Failed to import"
+fi

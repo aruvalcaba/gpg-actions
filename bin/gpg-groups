@@ -1,0 +1,462 @@
+#!/usr/bin/env bash
+
+##
+# GPG Groups GUI
+##
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+GPG_ACTION_GROUP_STORE_EMAIL=${GPG_ACTION_GROUP_STORE_EMAIL:-}
+
+##
+# User Interface
+##
+
+display_select_key()
+{
+    local text="$1"
+    local filter=cat
+    local options=(
+        --list \
+        --checklist \
+        --separator="\n" \
+        --width=900\
+        --height=800\
+        --title="Select Recipients" \
+        --text="$text" \
+        --column="Select" \
+        --column="KeyID" \
+        --column="UID" \
+        --column="Created" \
+        --column="Expiry"
+    )
+
+    if [[ "$GPG_ACTION_GROUP_STORE_EMAIL" ]]; then
+        options+=( --print-column=3 )
+        filter=extract_email
+    fi
+
+    zenity "${options[@]}" | $filter
+}
+
+extract_email()
+{
+    grep --only-matching --perl-regexp '(?<=<).+@.+\.[^>]+'
+}
+
+display_select_group()
+{
+    local title=$1
+    local text=$2
+    zenity \
+        --list \
+        --title="$title" \
+        --text="$text" \
+        --column="Name"
+}
+
+display_main_menu()
+{
+    zenity \
+        --list \
+        --title "GPG Groups"\
+        --text "Select action" \
+        --column "action" \
+        --column "title" \
+        --hide-header \
+        --hide-column 1 \
+        --cancel-label "Exit" \
+        --ok-label "Go!"
+}
+
+display_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --info \
+        --title="$title" \
+        --no-markup \
+        --no-wrap \
+        --text "$text"
+}
+
+display_text_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --text-info \
+        --width 800 \
+        --height 500 \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --filename <(printf '%s\n' "$text")
+}
+
+display_confirm_delete()
+{
+    local name=$1
+    zenity \
+        --question \
+        --width=900\
+        --title "Confirm Delete" \
+        --text "Are you sure you want to delete the group: $name ?" \
+        --ok-label "Confirm Delete"
+}
+
+prompt_group_name()
+{
+    zenity \
+        --entry \
+        --title "Create Group" \
+        --text "Enter group name"
+}
+
+display_error()
+{
+    local title=$1
+    local text=$2
+    zenity \
+        --error \
+        --title "$title" \
+        --text "$text"
+}
+
+display_group_exists_error()
+{
+    local name=$1
+    display_error \
+        "Group already exists!" \
+        "Group '$name' already exists"
+}
+
+##
+# Methods
+##
+
+format_date()
+{
+    if [[ "$1" ]]; then
+        date --date="@$1" --iso-8601
+    else
+        printf '%s\n' "Invalid"
+    fi
+}
+
+is_not_expired()
+{
+    # http://www.mit.edu/afs.new/sipb/user/kolya/gpg/gnupg-1.2.1/doc/DETAILS
+    # o = Unknown (this key is new to the system)
+    # i = The key is invalid (e.g. due to a missing self-signature)
+    # d = The key has been disabled
+    # r = The key has been revoked
+    # e = The key has expired
+    # - = Unknown trust (i.e. no value assigned)
+    # q = Undefined trust
+    #     '-' and 'q' may safely be treated as the same
+    #     value for most purposes
+    # n = Don't trust this key at all
+    # m = There is marginal trust in this key
+    # f = The key is full trusted.
+    # u = The key is ultimately trusted; this is only used for
+    #     keys for which the secret key is also available.
+    local trust=$1
+    [[ "$trust" =~ (o|u|q|m|f|-) ]]
+}
+
+format_key_data()
+{
+    local active=$1
+    local type trust keyid created expiry uid
+    local cur_keyid cur_created cur_expiry
+    while IFS=: read -r type trust _ _ keyid created expiry _ _ uid _; do
+        case "$type" in
+            pub)
+                if is_not_expired "$trust"; then
+                    cur_keyid=$keyid
+                    cur_created=$(format_date "$created")
+                    cur_expiry=$(format_date "$expiry")
+                fi
+                ;;
+            uid)
+                if [[ "$cur_keyid" ]]; then
+                    printf '%s\n' \
+                        "$active" \
+                        "$cur_keyid" \
+                        "$(iconv -t utf-8 <<< "$uid")" \
+                        "$cur_created" \
+                        "$cur_expiry"
+                    cur_keyid=
+                fi
+                ;;
+            *) ;;
+        esac
+    done
+}
+
+get_conf_value() {
+    gpgconf --list-options gpg | grep '^group' | cut -d: -f10-
+}
+
+set_conf_value() {
+    gpgconf --change-options gpg
+}
+
+get_group_lines() {
+    get_conf_value | sed 's/,\{0,1\}"/\n/g' | grep '^.\+'
+}
+
+get_group_names() {
+    get_group_lines | cut -d' ' -f1
+}
+
+list_keys()
+{
+    gpg --with-colons --list-keys "$@"
+}
+
+get_group_keys()
+{
+    local selected=$1
+    local name keysval keys
+    get_group_lines | while read -r name _ keysval; do
+        if [[ "$name" == "$selected" ]]; then
+            read -ra keys <<< "$keysval"
+            printf '%s\n' "${keys[@]}"
+        fi
+    done
+}
+
+set_groups() {
+    local name keys data value
+    while read -r name _ keys; do
+        data+=$(printf '"%s = %s,' "$name" "$keys")
+    done
+    value=$(printf '%s' "${data%?}")
+    printf 'group:0:%s' "$value" | set_conf_value
+}
+
+select_group() {
+    local title=$1
+    local text=$2
+    get_group_names | display_select_group "$title" "$text"
+}
+
+select_group_keys()
+{
+    local selected_group=$1
+    local group_keys data
+    readarray -t group_keys < <(get_group_keys "$selected_group")
+    {
+        list_keys "${group_keys[@]}" | format_key_data "true" ;
+        list_keys | format_key_data |
+            while readarray -t -n 5 data && ((${#data[@]})); do
+                if ! grep --quiet --fixed "${data[1]}" <<< "${group_keys[*]}"; then
+                    printf "%s\n" "${data[@]}"
+                fi
+            done
+    } | display_select_key "Select recipients for group: '$selected_group'"
+}
+
+select_keys()
+{
+    list_keys | format_key_data | display_select_key "$1"
+}
+
+has_group()
+{
+    local name=$1
+    grep --quiet --fixed --line-regexp "$name" < <(get_group_names)
+}
+
+##
+# Commands
+##
+
+edit_group()
+{
+    local selected_group=$1
+    local new_keys
+
+    if [[ -z "$selected_group" ]]; then
+        if ! selected_group=$(select_group "Edit group" "Select group to edit"); then
+            return
+        fi
+    fi
+
+    if ! has_group "$selected_group"; then
+        display_error "Invalid Group" "Group '$selected_group' des not exist"
+        die "Invalid group to edit"
+    fi
+
+    if ! new_keys=$(select_group_keys "$selected_group"); then
+        return
+    fi
+
+    readarray -t new_keys <<< "$new_keys"
+
+    get_group_lines | while read -r name _ keys; do
+        if [[ "$name" == "$selected_group" ]]; then
+            printf '%s = %s\n' "$name" "${new_keys[*]}"
+        else
+            printf '%s = %s\n' "$name" "$keys"
+        fi
+    done | set_groups
+
+    display_text_info \
+        "Group Updated" \
+        "$(printf 'Updated group "%s" with:\n%s' "$selected_group" "$(printf ' - %s\n' "${new_keys[@]}")")"
+}
+
+delete_group()
+{
+    local selected_group=$1
+
+    if [[ -z "$selected_group" ]]; then
+        if ! selected_group=$(select_group "Delete group" "Select group to delete"); then
+            return
+        fi
+    fi
+
+    if ! has_group "$selected_group"; then
+        display_error "Invalid Group" "Group '$selected_group' des not exist"
+        die "Invalid group to edit"
+    fi
+
+    if display_confirm_delete "$selected_group"; then
+        get_group_lines | while read -r name _ keys; do
+            if [[ "$name" != "$selected_group" ]]; then
+                printf '%s = %s\n' "$name" "$keys"
+            fi
+        done | set_groups
+
+        display_info \
+            "Group Deleted" \
+            "$(printf 'Deleted group "%s".' "$selected_group")"
+    fi
+}
+
+create_group()
+{
+    local name=$1
+    local keys
+
+    if [[ -z "$name" ]]; then
+        if ! name=$(prompt_group_name); then
+            return
+        fi
+    fi
+
+    [[ -z "$name" ]] && return
+
+    while has_group "$name"; do
+        display_group_exists_error "$name"
+        if ! name=$(prompt_group_name); then
+            return
+        fi
+        [[ -z "$name" ]] && return
+    done
+
+    if ! keys=$(select_keys "Select keys for new group: '$name'"); then
+        return
+    fi
+
+    readarray -t keys <<< "$keys"
+
+    {
+        get_group_lines
+        printf '%s = %s\n' "$name" "${keys[*]}"
+    } | set_groups
+
+    display_text_info \
+        "Group Created" \
+        "$(printf 'Created group "%s" with:\n%s' "$name" "$(printf ' - %s\n' "${keys[@]}")")"
+}
+
+copy_group()
+{
+    local source=$1
+    local destination=$2
+
+    if [[ -z "$source" ]]; then
+        if ! source=$(select_group "Copy group" "Select group to copy"); then
+            return
+        fi
+    fi
+
+    if ! has_group "$source"; then
+        display_error "Invalid Group" "Group '$selected_group' does not exist"
+        die "Invalid group to copy"
+    fi
+
+    if [[ -z "$destination" ]]; then
+        if ! destination=$(prompt_group_name); then
+            return
+        fi
+    fi
+
+    while has_group "$destination"; do
+        display_group_exists_error "$destination"
+        if ! destination=$(prompt_group_name); then
+            return
+        fi
+        [[ -z "$destination" ]] && return
+    done
+
+    get_group_lines | while read -r name _ keys; do
+        printf '%s = %s\n' "$name" "$keys"
+        if [[ "$name" == "$source" ]]; then
+            printf '%s = %s\n' "$destination" "$keys"
+        fi
+    done | set_groups
+
+    display_info \
+        "Copied Group" \
+        "Copied group '$source' to '$destination'"
+}
+
+main_menu()
+{
+    local action;
+    local actions=(
+        'create' 'Create Group'
+        'copy'   'Copy Group'
+        'edit'   'Edit Group'
+        'delete' 'Delete Group'
+    )
+
+    while action=$(printf '%s\n' "${actions[@]}" | display_main_menu); do
+        case "$action" in
+            create) create_group ;;
+            edit)   edit_group ;;
+            delete) delete_group ;;
+            copy)   copy_group ;;
+        esac
+    done
+}
+
+##
+# Main
+##
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+
+case $1 in
+    '') main_menu ;;
+    create|c) shift; create_group "$1" ;;
+    edit|e)   shift; edit_group "$1" ;;
+    delete|d) shift; delete_group "$1" ;;
+    copy|cp)  shift; copy_group "$1" "$2";;
+    *) die "Invalid Action $1" ;;
+esac

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+	<icon>gcr-key-pair</icon>
+	<name>Import Key</name>
+	<unique-id>1618209800830717-1</unique-id>
+	<command>gpg-import-keys %f</command>
+	<description>Import PGP Keys</description>
+	<patterns>*.gpg;*.asc;*.aexpk;*.pgp</patterns>
+	<other-files/>
+</action>
+<action>
+	<icon>folder-unlocked</icon>
+	<name>Decrypt</name>
+	<unique-id>1618270517204806-1</unique-id>
+	<command>gpg-decrypt %f</command>
+	<description>Decrypt PGP File</description>
+	<patterns>*.gpg;*.asc,*.pgp</patterns>
+	<other-files/>
+</action>
+<action>
+	<icon>folder-locked</icon>
+	<name>Encrypt</name>
+	<unique-id>1618270575255073-2</unique-id>
+	<command>gpg-encrypt %f</command>
+	<description>Encrypt File with PGP</description>
+	<patterns>*</patterns>
+	<audio-files/>
+	<image-files/>
+	<other-files/>
+	<text-files/>
+	<video-files/>
+</action>
+<action>
+	<icon>emblem-information</icon>
+	<name>PGP Info</name>
+	<unique-id>1620342339184799-1</unique-id>
+	<command>gpg-info %f</command>
+	<description>Display PGP packets</description>
+	<patterns>*.gpg;*.asc;*.aexpk</patterns>
+	<other-files/>
+</action>
+<action>
+	<icon>mail-encrypted-full</icon>
+	<name>PGP Send</name>
+	<unique-id>1620343426864841-2</unique-id>
+	<command>gpg-send %f</command>
+	<description>Draft an email to PGP recipients</description>
+	<patterns>*.gpg;*.pgp</patterns>
+	<other-files/>
+</action>
+</actions>

@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+
+##
+# GPG Decryption GUI
+##
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+
+##
+# User Interface
+##
+
+display_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --info \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+}
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+
+}
+
+display_text_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --text-info \
+        --width 800 \
+        --height 500 \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --filename <(printf '%s\n' "$text")
+}
+
+prompt_source()
+{
+    zenity \
+        --file-selection \
+        --file-filter='Encrypted files (gpg,asc,pgp) | *.gpg *.asc *.pgp' \
+        --file-filter='All files | *' \
+        --title="Select encrypted file"
+}
+
+prompt_destination()
+{
+    local default=$1
+    zenity \
+        --file-selection \
+        --save \
+        --confirm-overwrite \
+        --filename="$default" \
+        --title="Select destination for decrypted file"
+}
+
+##
+# Methods
+##
+
+get_default_destination()
+{
+    local encrypted=$1
+    local default="$encrypted.DECRYPTED"
+    shopt -s nocasematch # case insensitive pattern match
+    [[ "$encrypted" =~ .*\.(asc|gpg|pgp)$  ]] && default="${encrypted%.*}"
+    shopt -u nocasematch
+    printf '%s\n' "$default"
+}
+
+gpg_decrypt()
+{
+    local source=$1
+    local destination=$2
+    local gpg_args=(
+        --decrypt
+        --batch
+        --yes
+        --output "$2"
+    )
+
+    gpg "${gpg_args[@]}" -- "$source" 2>&1
+}
+
+##
+# Commands
+##
+
+cmd_decrypt()
+{
+    local encrypted="$1"
+    local default destination
+    local output
+
+    if [[ -z "$encrypted" ]]; then
+        encrypted=$(prompt_source)
+    fi
+
+    [[ -f "$encrypted" ]] || die "No file to decrypt"
+
+    default=$(get_default_destination "$encrypted")
+    destination=$(prompt_destination "$default") || die "Decryption canceled"
+    [[ "$destination" ]] || die "Decryption canceled";
+
+    if ! output=$(gpg_decrypt "$encrypted" "$destination") ; then
+        display_error "Decryption Failed" "Failed to decrypt $encrypted"
+        display_text_info "Failed to decrypt $encrypted" "$output"
+        die "Failed to decrypt $encrypted"
+    fi
+
+    display_text_info "Decrypted $encrypted -> $destination" "$output"
+}
+
+##
+# Main
+##
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+cmd_decrypt "$1"

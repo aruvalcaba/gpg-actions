@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+get_packets()
+{
+    gpg --batch --pinentry-mode loopback  --list-packets -- "$1"
+}
+
+is_key()
+{
+    get_packets "$1" | grep --quiet --fixed-strings ':public key packet:'
+}
+
+is_encrypted()
+{
+    local packets
+    packets=$(get_packets "$1")
+    grep --quiet --fixed-strings ':encrypted data packet:' <<< "$packets" ||
+        grep --quiet --fixed-strings ':pubkey enc packet:' <<< "$packets"
+
+}
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+case "$1" in
+    -k|--key) is_key "$2" ; exit $? ;;
+    -e|--encrypted) is_encrypted "$2" ; exit $? ;;
+esac
+
+if is_key "$1"; then printf 'key\n'; exit; fi
+if is_encrypted "$1"; then printf 'enc\n'; exit; fi
+
+exit 1

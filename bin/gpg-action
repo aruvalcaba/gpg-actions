@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+
+cmd_decrypt=gpg-decrypt
+cmd_import=gpg-import-keys
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+get_packets()
+{
+    gpg --batch --pinentry-mode loopback  --list-packets -- "$1"
+}
+
+is_key()
+{
+    get_packets "$1" | grep --quiet --fixed-strings ':public key packet:'
+}
+
+is_encrypted()
+{
+    local packets
+    packets=$(get_packets "$1")
+    grep --quiet --fixed-strings ':symkey enc packet:' <<< "$packets" ||
+        grep --quiet --fixed-strings ':pubkey enc packet:' <<< "$packets"
+
+}
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text="$text"
+
+}
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+if ! command -v "$cmd_decrypt" >/dev/null; then
+    die "cmd_decrypt is not available"
+fi
+
+if ! command -v "$cmd_import" >/dev/null; then
+    die "cmd_import is not available"
+fi
+
+if is_encrypted "$1"; then
+    $cmd_decrypt "$1"
+elif is_key "$1"; then
+    $cmd_import "$1"
+else
+    display_error "Invalid File" "$1 is not a PGP file"
+fi
+

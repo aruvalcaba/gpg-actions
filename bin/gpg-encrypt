@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+
+##
+# GPG Encryption GUI
+##
+
+die() { printf '%s\n' "$*" >&2 ; exit 1 ; }
+
+##
+# User Interface
+##
+
+display_select_recipient()
+{
+    local file=$1
+    zenity \
+        --list \
+        --checklist \
+        --separator="\n" \
+        --width 900\
+        --height 800\
+        --title="Select Recipients" \
+        --text="Select Recipients for $file" \
+        --column="Select" \
+        --column="KeyID" \
+        --column="UID" \
+        --column="Created" \
+        --column="Expiry"
+}
+
+prompt_source()
+{
+    zenity \
+        --file-selection \
+        --title="Select file to encrypt"
+}
+
+confirm_overwrite()
+{
+    local destination=$1
+    zenity \
+        --question \
+        --width 600 \
+        --title "Overwrite $destination?" \
+        --text "$destination already exists. Do you want to overwrite it?" \
+        --ok-label "Overwrite" \
+        --cancel-label "Cancel"
+}
+
+display_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --text-info \
+        --width 800 \
+        --height 500 \
+        --title="$title" \
+        --no-markup \
+        --no-wrap \
+        --cancel-label "OK" \
+        --filename "$text"
+}
+
+display_text_info()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --text-info \
+        --width 800 \
+        --height 500 \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --filename <(printf '%s\n' "$text")
+}
+
+display_error()
+{
+    local title=$1
+    local text=$2
+
+    zenity \
+        --error \
+        --no-markup \
+        --no-wrap \
+        --title="$title" \
+        --text "$text"
+}
+
+##
+# Methods
+##
+
+get_groups_config()
+{
+    gpg --with-colons --list-config group
+}
+
+get_keys()
+{
+    gpg --with-colons --list-keys
+}
+
+format_groups_data()
+{
+    local name
+    while IFS=: read -r _ _ name _; do
+        printf '%s\n' \
+        '' \
+        "$name" \
+        "$name" \
+        '' \
+        ''
+    done;
+}
+
+format_date()
+{
+    if [[ "$1" ]]; then
+        date --date="@$1" --iso-8601
+    else
+        printf '%s\n' "Invalid"
+    fi
+}
+
+is_not_expired()
+{
+    # http://www.mit.edu/afs.new/sipb/user/kolya/gpg/gnupg-1.2.1/doc/DETAILS
+    # o = Unknown (this key is new to the system)
+    # i = The key is invalid (e.g. due to a missing self-signature)
+    # d = The key has been disabled
+    # r = The key has been revoked
+    # e = The key has expired
+    # - = Unknown trust (i.e. no value assigned)
+    # q = Undefined trust
+    #     '-' and 'q' may safely be treated as the same
+    #     value for most purposes
+    # n = Don't trust this key at all
+    # m = There is marginal trust in this key
+    # f = The key is full trusted.
+    # u = The key is ultimately trusted; this is only used for
+    #     keys for which the secret key is also available.
+    local trust=$1
+    [[ "$trust" =~ (o|u|q|m|f|-) ]]
+}
+
+format_key_data()
+{
+    local type trust keyid created expiry uid
+    local cur_keyid cur_created cur_expiry
+    while IFS=: read -r type trust _ _ keyid created expiry _ _ uid _; do
+        case "$type" in
+            pub)
+                if is_not_expired "$trust"; then
+                    cur_keyid=$keyid
+                    cur_created=$(format_date "$created")
+                    cur_expiry=$(format_date "$expiry")
+                fi
+                ;;
+            uid)
+                if [[ "$cur_keyid" ]]; then
+                    printf '%s\n' \
+                        "" \
+                        "$cur_keyid" \
+                        "$(iconv -t utf-8 <<< "$uid")" \
+                        "$cur_created" \
+                        "$cur_expiry"
+                    cur_keyid=
+                fi
+                ;;
+            *) ;;
+        esac
+    done
+}
+
+recipient_data()
+{
+    get_groups_config | format_groups_data
+    get_keys | format_key_data
+}
+
+gpg_encrypt()
+{
+    local source=$1
+    local destination=$2
+    shift
+    shift
+    local recipients=("$@")
+    local recipient
+    local gpg_args=(
+        --encrypt
+        --trust-model always
+        --batch
+        --yes
+        --verbose
+        --output "$destination"
+    )
+
+    [[ -f "$source" ]] || die "$source is not a file"
+
+    for recipient in "${recipients[@]}"; do
+        gpg_args+=(--recipient "$recipient")
+    done
+
+    gpg "${gpg_args[@]}" -- "$source" 2>&1
+}
+
+##
+# Command
+##
+
+cmd_encrypt()
+{
+    local source_file=$1
+    local recipients destination
+
+    if [[ -z "$source_file" ]]; then
+        source_file=$(prompt_source)
+    fi
+
+    [[ -f "$source_file" ]] || die "no file to encrypt"
+
+    destination="$source_file.gpg"
+
+    if [[ -f "$destination" ]]; then
+        confirm_overwrite "$destination" || die "Operation Canceled"
+    fi
+
+    if ! recipients=$(recipient_data | display_select_recipient "$source_file"); then
+        die "Encryption Canceled"
+    fi
+
+    if [[ -z "$recipients" ]]; then
+        display_error "No recipients" "No recipients selected"
+        die "Encryption canceled. No recipients selected"
+    fi
+
+    readarray -t recipients <<< "$recipients"
+
+    if ! output=$(gpg_encrypt "$source_file" "$destination" "${recipients[@]}"); then
+        display_error "Encryption Failed" "Encryption Failed"
+        display_text_info "Encryption Failed" "$output"
+        die "Encryption failed"
+    fi
+
+    display_text_info "Encrypted $source_file -> $destination" "$output"
+}
+
+##
+# Main
+##
+
+if ! command -v gpg >/dev/null; then
+    die "gpg is not available"
+fi
+
+if ! command -v zenity >/dev/null; then
+    die "zenity is not available"
+fi
+
+cmd_encrypt "$1"
