@@ -15,7 +15,7 @@
 	<unique-id>1618270517204806-1</unique-id>
 	<command>gpg-decrypt %f</command>
 	<description>Decrypt PGP File</description>
-	<patterns>*.gpg;*.asc,*.pgp</patterns>
+	<patterns>*.gpg;*.asc;*.pgp</patterns>
 	<other-files/>
 </action>
 <action>
