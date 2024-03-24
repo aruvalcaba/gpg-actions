@@ -67,10 +67,8 @@ prompt_destination()
     local default=$1
     zenity \
         --file-selection \
-        --save \
-        --confirm-overwrite \
-        --filename="$default" \
-        --title="Select destination for decrypted file"
+        --directory \
+        --title="Select destination folder for decrypted file"
 }
 
 ##
@@ -118,8 +116,8 @@ cmd_decrypt()
     [[ -f "$encrypted" ]] || die "No file to decrypt"
 
     default=$(get_default_destination "$encrypted")
-    destination=$(prompt_destination "$default") || die "Decryption canceled"
-    [[ "$destination" ]] || die "Decryption canceled";
+
+    destination=$default #Assume default is destination. Perhaps this should be configurable from bashrc or something
 
     if ! output=$(gpg_decrypt "$encrypted" "$destination") ; then
         display_error "Decryption Failed" "Failed to decrypt $encrypted"
